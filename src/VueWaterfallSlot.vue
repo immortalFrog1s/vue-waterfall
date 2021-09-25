@@ -14,11 +14,18 @@
 </style>
 
 <script>
-
 export default {
-  data: () => ({
-    isShow: false
-  }),
+  name: 'VueWaterfallSlot',
+  data() {
+    return {
+      rect: {
+        top: 0,
+        left: 0,
+        width: 0,
+        height: 0
+      }
+    }
+  },
   props: {
     width: {
       required: true,
@@ -33,13 +40,13 @@ export default {
     },
     moveClass: {
       default: ''
+    },
+    isShow: {
+      default: false
     }
   },
-  methods: {
-    notify () {
-      this.$parent.$emit('reflow', this)
-    },
-    getMeta () {
+  computed:{
+    meta(){
       return {
         vm: this,
         node: this.$el,
@@ -48,27 +55,31 @@ export default {
         height: this.height,
         moveClass: this.moveClass
       }
+    },
+    sizeWatchArray(){
+      return [
+        this.width,
+        this.height
+      ]
     }
   },
-  created () {
-    this.rect = {
-      top: 0,
-      left: 0,
-      width: 0,
-      height: 0
+  watch:{
+    sizeWatchArray: {
+      handler(){
+        this.notify()
+      },
+      deep: true
     }
-    this.$watch(() => (
-      this.width,
-      this.height
-    ), this.notify)
   },
-  mounted () {
-    this.$parent.$once('reflowed', () => {
-      this.isShow = true
-    })
+  methods: {
+    notify() {
+      this.$emit('reflow')
+    }
+  },
+  mounted() {
     this.notify()
   },
-  destroyed () {
+  unmounted() {
     this.notify()
   }
 }

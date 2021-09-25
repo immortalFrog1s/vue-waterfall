@@ -1,6 +1,18 @@
 <template>
   <div class="vue-waterfall" :style="style">
-    <slot></slot>
+    <vue-waterfall-slot
+        v-for="(item, index) in items"
+        :width="item.width"
+        :height="item.height"
+        :order="index"
+        :key="item.index"
+        :move-class="moveClass"
+
+        :ref="el => slotRefsArray[index]=el"
+        :isShow="slotIsShow"
+        @reflow="reflowHandler">
+      <slot :item="item"></slot>
+    </vue-waterfall-slot>
   </div>
 </template>
 
@@ -12,11 +24,24 @@
 </style>
 
 <script>
+import {
+  defineAsyncComponent
+} from "vue";
 
 const MOVE_CLASS_PROP = '_wfMoveClass'
 
 export default {
+  name: 'VueWaterfall',
+  components: {
+    VueWaterfallSlot: defineAsyncComponent(() => import('@/components/vueWaterfall/VueWaterfallSlot'))
+  },
   props: {
+    items: {
+      required: true
+    },
+    moveClass: {
+      required: true
+    },
     autoResize: {
       default: true
     },
@@ -50,60 +75,99 @@ export default {
     },
     grow: {
       validator: (val) => val instanceof Array
-    },
-    watch: {
-      default: () => ({})
     }
   },
-  data: () => ({
-    style: {
-      height: '',
-      overflow: ''
+  data() {
+    return {
+      style: {
+        height: '',
+        overflow: ''
+      },
+      token: null,
+      slotIsShow: false,
+      slotRefsArray: [],
+      virtualRects: []
+    }
+  },
+  computed: {
+    reflowWatchArray() {
+      return [
+        this.align,
+        this.line,
+        this.lineGap,
+        this.minLineGap,
+        this.maxLineGap,
+        this.singleMaxWidth,
+        this.fixedHeight,
+        this.items
+      ]
+    }
+  },
+  watch:{
+    reflowWatchArray: {
+      handler(){
+        this.reflowHandler()
+      },
+      deep: true
     },
-    token: null
-  }),
+    grow: {
+      handler(){
+        this.reflowHandler()
+      },
+      deep: true
+    },
+    autoResize: {
+      handler(){
+        this.autoResizeHandler()
+      },
+      deep: true
+    }
+  },
   methods: {
-    reflowHandler,
-    autoResizeHandler,
-    reflow
+    reflowHandler() {
+      clearTimeout(this.token)
+      this.token = setTimeout(this.reflow, this.interval)
+    },
+    autoResizeHandler(autoResize) {
+      if (autoResize === false || !this.autoResize) {
+        off(window, 'resize', this.reflowHandler, false)
+      } else {
+        on(window, 'resize', this.reflowHandler, false)
+      }
+    },
+    reflow() {
+      if (!this.$el) {
+        return
+      }
+      let width = this.$el.clientWidth
+      let metas = this.slotRefsArray.map((slot) => slot.meta)
+      metas.sort((a, b) => a.order - b.order)
+      this.virtualRects = metas.map(() => ({}))
+      calculate(this, metas, this.virtualRects)
+      setTimeout(() => {
+        if (isScrollBarVisibilityChange(this.$el, width)) {
+          calculate(this, metas, this.virtualRects)
+        }
+        this.style.overflow = 'hidden'
+        render(this.virtualRects, metas)
+
+        this.$emit('reflowed')
+        this.slotIsShow = true
+      }, 0)
+    }
   },
-  created () {
-    this.virtualRects = []
-    this.$on('reflow', () => {
-      this.reflowHandler()
-    })
-    this.$watch(() => (
-      this.align,
-      this.line,
-      this.lineGap,
-      this.minLineGap,
-      this.maxLineGap,
-      this.singleMaxWidth,
-      this.fixedHeight,
-      this.watch
-    ), this.reflowHandler)
-    this.$watch('grow', this.reflowHandler)
-  },
-  mounted () {
-    this.$watch('autoResize', this.autoResizeHandler)
+  mounted() {
+    // this.$watch('autoResize', this.autoResizeHandler, {deep: true})
     on(this.$el, getTransitionEndEvent(), tidyUpAnimations, true)
     this.autoResizeHandler(this.autoResize)
   },
-  beforeDestroy () {
+  beforeUnmount() {
     this.autoResizeHandler(false)
     off(this.$el, getTransitionEndEvent(), tidyUpAnimations, true)
   }
 }
 
-function autoResizeHandler (autoResize) {
-  if (autoResize === false || !this.autoResize) {
-    off(window, 'resize', this.reflowHandler, false)
-  } else {
-    on(window, 'resize', this.reflowHandler, false)
-  }
-}
-
-function tidyUpAnimations (event) {
+function tidyUpAnimations(event) {
   let node = event.target
   let moveClass = node[MOVE_CLASS_PROP]
   if (moveClass) {
@@ -111,39 +175,17 @@ function tidyUpAnimations (event) {
   }
 }
 
-function reflowHandler () {
-  clearTimeout(this.token)
-  this.token = setTimeout(this.reflow, this.interval)
-}
-
-function reflow () {
-  if (!this.$el) { return }
-  let width = this.$el.clientWidth
-  let metas = this.$children.map((slot) => slot.getMeta())
-  metas.sort((a, b) => a.order - b.order)
-  this.virtualRects = metas.map(() => ({}))
-  calculate(this, metas, this.virtualRects)
-  setTimeout(() => {
-    if (isScrollBarVisibilityChange(this.$el, width)) {
-      calculate(this, metas, this.virtualRects)
-    }
-    this.style.overflow = 'hidden'
-    render(this.virtualRects, metas)
-    this.$emit('reflowed', this)
-  }, 0)
-}
-
-function isScrollBarVisibilityChange (el, lastClientWidth) {
+function isScrollBarVisibilityChange(el, lastClientWidth) {
   return lastClientWidth !== el.clientWidth
 }
 
-function calculate (vm, metas, styles) {
+function calculate(vm, metas, styles) {
   let options = getOptions(vm)
   let processor = vm.line === 'h' ? horizontalLineProcessor : verticalLineProcessor
   processor.calculate(vm, options, metas, styles)
 }
 
-function getOptions (vm) {
+function getOptions(vm) {
   const maxLineGap = vm.maxLineGap ? +vm.maxLineGap : vm.lineGap
   return {
     align: ~['left', 'right', 'center'].indexOf(vm.align) ? vm.align : 'left',
@@ -157,15 +199,16 @@ function getOptions (vm) {
   }
 }
 
-var verticalLineProcessor = (() => {
+const verticalLineProcessor = (() => {
 
-  function calculate (vm, options, metas, rects) {
+  function calculate(vm, options, metas, rects) {
     let width = vm.$el.clientWidth
     let grow = options.grow
-    let strategy = grow
-      ? getRowStrategyWithGrow(width, grow)
-      : getRowStrategy(width, options)
+    let strategy = grow ?
+        getRowStrategyWithGrow(width, grow) :
+        getRowStrategy(width, options)
     let tops = getArrayFillWith(0, strategy.count)
+
     metas.forEach((meta, index) => {
       let offset = tops.reduce((last, top, i) => top < tops[last] ? i : last, 0)
       let width = strategy.width[offset % strategy.count]
@@ -179,7 +222,7 @@ var verticalLineProcessor = (() => {
     vm.style.height = Math.max.apply(Math, tops) + 'px'
   }
 
-  function getRowStrategy (width, options) {
+  function getRowStrategy(width, options) {
     let count = width / options.lineGap
     let slotWidth
     if (options.singleMaxWidth >= width) {
@@ -215,7 +258,7 @@ var verticalLineProcessor = (() => {
     }
   }
 
-  function getRowStrategyWithGrow (width, grow) {
+  function getRowStrategyWithGrow(width, grow) {
     let total = sum(grow)
     return {
       width: grow.map(val => width * val / total),
@@ -230,9 +273,8 @@ var verticalLineProcessor = (() => {
 
 })()
 
-var horizontalLineProcessor = (() => {
-
-  function calculate (vm, options, metas, rects) {
+const horizontalLineProcessor = (() => {
+  function calculate(vm, options, metas, rects) {
     let width = vm.$el.clientWidth
     let total = metas.length
     let top = 0
@@ -254,7 +296,7 @@ var horizontalLineProcessor = (() => {
     vm.style.height = top + 'px'
   }
 
-  function getRowStrategy (width, options, metas, offset) {
+  function getRowStrategy(width, options, metas, offset) {
     let greedyCount = getGreedyCount(width, options.lineGap, metas, offset)
     let lazyCount = Math.max(greedyCount - 1, 1)
     let greedySize = getContentSize(width, options, metas, offset, greedyCount)
@@ -273,7 +315,7 @@ var horizontalLineProcessor = (() => {
     }
   }
 
-  function getGreedyCount (rowWidth, rowHeight, metas, offset) {
+  function getGreedyCount(rowWidth, rowHeight, metas, offset) {
     let count = 0
     for (let i = offset, width = 0; i < metas.length && width <= rowWidth; i++) {
       width += metas[i].width * rowHeight / metas[i].height
@@ -282,7 +324,7 @@ var horizontalLineProcessor = (() => {
     return count
   }
 
-  function getContentSize (rowWidth, options, metas, offset, count) {
+  function getContentSize(rowWidth, options, metas, offset, count) {
     let originWidth = 0
     for (let i = count - 1; i >= 0; i--) {
       let meta = metas[offset + i]
@@ -308,7 +350,7 @@ var horizontalLineProcessor = (() => {
     }
   }
 
-  function chooseFinalSize (lazySize, greedySize, rowWidth) {
+  function chooseFinalSize(lazySize, greedySize, rowWidth) {
     if (lazySize.cost === Infinity && greedySize.cost === Infinity) {
       return greedySize.width < rowWidth ? greedySize : lazySize
     } else {
@@ -322,7 +364,7 @@ var horizontalLineProcessor = (() => {
 
 })()
 
-function getLeft (width, contentWidth, align) {
+function getLeft(width, contentWidth, align) {
   switch (align) {
     case 'right':
       return width - contentWidth
@@ -333,11 +375,11 @@ function getLeft (width, contentWidth, align) {
   }
 }
 
-function sum (arr) {
+function sum(arr) {
   return arr.reduce((sum, val) => sum + val)
 }
 
-function render (rects, metas) {
+function render(rects, metas) {
   let metasNeedToMoveByTransform = metas.filter((meta) => meta.moveClass)
   let firstRects = getRects(metasNeedToMoveByTransform)
   applyRects(rects, metas)
@@ -353,11 +395,11 @@ function render (rects, metas) {
   })
 }
 
-function getRects (metas) {
+function getRects(metas) {
   return metas.map((meta) => meta.vm.rect)
 }
 
-function applyRects (rects, metas) {
+function applyRects(rects, metas) {
   rects.forEach((rect, i) => {
     let style = metas[i].node.style
     metas[i].vm.rect = rect
@@ -367,36 +409,35 @@ function applyRects (rects, metas) {
   })
 }
 
-function setTransform (node, firstRect, lastRect) {
+function setTransform(node, firstRect, lastRect) {
   let dx = firstRect.left - lastRect.left
   let dy = firstRect.top - lastRect.top
   let sw = firstRect.width / lastRect.width
   let sh = firstRect.height / lastRect.height
   node.style.transform =
-  node.style.WebkitTransform = `translate(${dx}px,${dy}px) scale(${sw},${sh})`
+      node.style.WebkitTransform = `translate(${dx}px,${dy}px) scale(${sw},${sh})`
   node.style.transitionDuration = '0s'
 }
 
-function clearTransform (node) {
+function clearTransform(node) {
   node.style.transform = node.style.WebkitTransform = ''
   node.style.transitionDuration = ''
 }
 
-function getTransitionEndEvent () {
+function getTransitionEndEvent() {
   let isWebkitTrans =
-    window.ontransitionend === undefined &&
-    window.onwebkittransitionend !== undefined
-  let transitionEndEvent = isWebkitTrans
-    ? 'webkitTransitionEnd'
-    : 'transitionend'
-  return transitionEndEvent
+      window.ontransitionend === undefined &&
+      window.onwebkittransitionend !== undefined
+  return isWebkitTrans ?
+      'webkitTransitionEnd' :
+      'transitionend'
 }
 
 /**
  * util
  */
 
-function getArrayFillWith (item, count) {
+function getArrayFillWith(item, count) {
   let getter = (typeof item === 'function') ? () => item() : () => item
   let arr = []
   for (let i = 0; i < count; i++) {
@@ -405,7 +446,7 @@ function getArrayFillWith (item, count) {
   return arr
 }
 
-function addClass (elem, name) {
+function addClass(elem, name) {
   if (!hasClass(elem, name)) {
     let cur = attr(elem, 'class').trim()
     let res = (cur + ' ' + name).trim()
@@ -413,17 +454,17 @@ function addClass (elem, name) {
   }
 }
 
-function removeClass (elem, name) {
+function removeClass(elem, name) {
   let reg = new RegExp('\\s*\\b' + name + '\\b\\s*', 'g')
   let res = attr(elem, 'class').replace(reg, ' ').trim()
   attr(elem, 'class', res)
 }
 
-function hasClass (elem, name) {
+function hasClass(elem, name) {
   return (new RegExp('\\b' + name + '\\b')).test(attr(elem, 'class'))
 }
 
-function attr (elem, name, value) {
+function attr(elem, name, value) {
   if (typeof value !== 'undefined') {
     elem.setAttribute(name, value)
   } else {
@@ -431,12 +472,11 @@ function attr (elem, name, value) {
   }
 }
 
-function on (elem, type, listener, useCapture = false) {
+function on(elem, type, listener, useCapture = false) {
   elem.addEventListener(type, listener, useCapture)
 }
 
-function off (elem, type, listener, useCapture = false) {
+function off(elem, type, listener, useCapture = false) {
   elem.removeEventListener(type, listener, useCapture)
 }
-
 </script>
